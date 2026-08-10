@@ -1,0 +1,52 @@
+name: seal-build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build module zip and run tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build module-zip helper
+        run: |
+          set -euxo pipefail
+          HELPER="$(mktemp -d)"
+          echo "HELPER=$HELPER" >> "$GITHUB_ENV"
+          cp "$GITHUB_WORKSPACE/.github/create_mod.go" "$HELPER/create_mod.go"
+          cd "$HELPER"
+          go mod init example.com/mod
+          go get golang.org/x/mod@v0.24.0
+          go build -o "$HELPER/create_mod" ./create_mod.go
+
+      - name: Package module zip
+        run: |
+          set -euxo pipefail
+          # Upstream golang.org/x/net ships no .github directory; zip.CreateFromDir
+          # descends into it, so remove it before packaging to keep the zip faithful.
+          rm -rf "$GITHUB_WORKSPACE/.github"
+          mkdir -p "$RUNNER_TEMP/out"
+          "$HELPER/create_mod" golang.org/x/net v0.45.0 "$GITHUB_WORKSPACE" "$RUNNER_TEMP/out/v0.45.0.zip"
+          ls -l "$RUNNER_TEMP/out"
+
+      - name: Upload module zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-zip
+          path: ${{ runner.temp }}/out/v0.45.0.zip
+          if-no-files-found: error
+
+      - name: Build all packages
+        run: go build ./...
+
+      - name: Run test suite
+        run: go test ./...
